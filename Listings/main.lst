@@ -1,0 +1,406 @@
+C51 COMPILER V9.54   MAIN                                                                  06/16/2020 11:43:05 PAGE 1   
+
+
+C51 COMPILER V9.54, COMPILATION OF MODULE MAIN
+OBJECT MODULE PLACED IN .\Objects\main.obj
+COMPILER INVOKED BY: D:\keilC51\C51\BIN\C51.EXE main.c OPTIMIZE(8,SPEED) BROWSE DEBUG OBJECTEXTEND PRINT(.\Listings\main
+                    -.lst) OBJECT(.\Objects\main.obj)
+
+line level    source
+
+   1          #include "main.h"
+   2          
+   3          // I2C_SCLK P00 INT0
+   4          // I2C_SDA  P01 INT1
+   5          // i2c接收缓冲区，0字节为主机寻址广播，1~32数据区
+   6          idata uint8_t i2c_buffer[33];
+   7          data uint8_t i2c_buffer_cursor = 0;
+   8          data uint8_t i2c_byte = 0x00;
+   9          data uint8_t i2c_tick = 0;
+  10          
+  11          xdata uint16_t spindle_duty_min = DUTY_MIN_DEFAULT;
+  12          xdata uint16_t spindle_duty_max = DUTY_MAX_DEFAULT;
+  13          xdata uint16_t vss_time = VSS_TIME_DEFAULT;
+  14          
+  15          xdata uint8_t tone_tick = TONE_TICK_DEFAULT;
+  16          // 主轴继电器高电平有效，默认关闭
+  17          xdata uint8_t spindle_dir = SPINDLE_DIR_DEFAULT;
+  18          
+  19          xdata uint16_t speedup_duty_seg = DUTY_SEG_DEFAULT, speedup_time_seg = TIME_SEG_DEFAULT;
+  20          xdata uint16_t slowdown_duty_seg = DUTY_SEG_DEFAULT, slowdown_time_seg = TIME_SEG_DEFAULT;
+  21          
+  22          data int8_t delta = 0;
+  23          data int16_t pwm_duty = 0;
+  24          data uint8_t systemState = 0;
+  25          data uint8_t DelayFlag = FALSE;
+  26          
+  27          uint16_t calcPWMPeriod(uint16_t microseconds);
+  28          uint16_t calcTimer3Count(uint16_t miliseconds);
+  29          
+  30          void timerDelay(uint16_t microseconds);
+  31          void sysDelay(uint16_t miliseconds);
+  32          
+  33          void playTone(uint8_t tick);
+  34          
+  35          void main() {
+  36   1          uint16_t pwm_period;
+  37   1          
+  38   1          // 关看门狗
+  39   1          WDTCCR = 0x00;
+  40   1          // 等待内部高频晶振起振
+  41   1              while((CLKCON & 0x20) != 0x20);         
+  42   1          // 选择内部高频RC为系统时钟，内部高频RC2分频，Fosc=16MHz    
+  43   1              CLKSWR = 0x51;                  
+  44   1          // 等待内部高频切换完成    
+  45   1          while((CLKSWR & 0xC0) != 0x40);             
+  46   1          // Fosc 1分频得到Fcpu，Fcpu=16MHz   
+  47   1              CLKDIV = 0x01;
+  48   1          // I2C停止状态
+  49   1          I2C_STATE = I2C_STOP;
+  50   1          BUFFER_CHANGED = FALSE;
+  51   1          
+  52   1          EA_Enable();
+  53   1          
+  54   1          // 设置蜂鸣器P20 推挽输出
+C51 COMPILER V9.54   MAIN                                                                  06/16/2020 11:43:05 PAGE 2   
+
+  55   1          P2M0 = P2M0 & 0xF0 | 0x08;  
+  56   1          P2 &= 0xFE;
+  57   1          // 主轴状态指示灯P05,低电平有效
+  58   1          GPIO_Init(GPIOT0, GPIO_PIN_5, GPIO_MODE_OUT_PP);
+  59   1          GPIO_WriteHigh(GPIOT0, GPIO_PIN_5);
+  60   1          
+  61   1          // 主轴方向控制P02 P03,低电平有效,默认关闭
+  62   1          GPIO_Init(GPIOT0, GPIO_PIN_2, GPIO_MODE_OUT_PP);
+  63   1          GPIO_Init(GPIOT0, GPIO_PIN_3, GPIO_MODE_OUT_PP);
+  64   1          GPIO_WriteHigh(GPIOT0, GPIO_PIN_2);
+  65   1          GPIO_WriteHigh(GPIOT0, GPIO_PIN_3);
+  66   1          
+  67   1          // T0定时器做延时时钟, 优先级最低(0),时钟源Fosc=16M，不分频
+  68   1          TIM0_Init(TIM0_CLK_1, TIM0_SOFT_CONTROL, TIM0_INTIMING, TIM0_16BIT_CNT_TIMING);
+  69   1          TIM0_ITPriorityConfig(TIM3_ITPriority_0);
+  70   1          TIM0_ClearITFlag();
+  71   1          TIM0_ITCmd(ENABLE);
+  72   1          TIM0_OutPutCmd(DISABLE);
+  73   1          TIM0_Cmd(DISABLE);
+  74   1          
+  75   1          // TIM3做主轴VSS定时器，优先级1, 时钟源Fosc=16M，256分频
+  76   1          TIM3_Init(TIM3_SYSCLK, TIM3_CLK_256, DISABLE);
+  77   1          TIM3_ITPriorityConfig(TIM0_ITPriority_1);
+  78   1          TIM3_PDModeCmd(DISABLE);
+  79   1          TIM3_ClearITFlag();
+  80   1          TIM3_ITCmd(ENABLE);
+  81   1          TIM3_Cmd(DISABLE);
+  82   1          
+  83   1          // 配置模拟I2C引脚和中断
+  84   1          softi2c_pinmux_setup();
+  85   1          softi2c_int_config();
+  86   1          
+  87   1          // 配置P04 PWM推挽输出模式
+  88   1          GPIO_Init(GPIOT0, GPIO_PIN_4, GPIO_MODE_OUT_PP);
+  89   1          GPIO_WriteLow(GPIOT0, GPIO_PIN_4);
+  90   1              
+  91   1          PWM_Init(PWM0_Group, PWMCK_8, PWMX_PWX1_HIGH_VALID, INDEPENDENT_MODE);
+  92   1          // 关闭PWM出错检测
+  93   1          PWM_FLTConfig(PWM0_Group, FLFPIN_LOW_PWMOFF, PWMX_PWX1_ALL_LOW, DISABLE);
+  94   1          // 清除并关闭PWM中断
+  95   1          PWM_ClearITFlag(PWM0_Group);
+  96   1          PWM_ITCmd(PWM0_Group, DISABLE);
+  97   1           // 映射P04为PWM输出
+  98   1          PWM_PinRemapConfig(PWM_0, PWM_OUTPin_P04);
+  99   1          
+ 100   1          // 设置初始频率和占空比
+ 101   1          pwm_period = calcPWMPeriod(PWM_CYCLE);
+ 102   1          PWM_PeriodConfig(PWM0_Group, pwm_period);
+ 103   1          PWM_DutyCycleConfig(PWM0_Group, 0);
+ 104   1          
+ 105   1          while(1) {
+ 106   2              if(BUFFER_CHANGED) {
+ 107   3                  // check tag
+ 108   3                  if(i2c_buffer[0] != SLAVER_WRITE || i2c_buffer_cursor == 0) {
+ 109   4                      break;
+ 110   4                  }
+ 111   3                  
+ 112   3                  switch(i2c_buffer[1]) {
+ 113   4                      case SET_PARAM_CMD:
+ 114   4                          // 参数都以字节小端为准
+ 115   4                          spindle_duty_min = (i2c_buffer[3] << 8) | i2c_buffer[2];
+ 116   4                          spindle_duty_max = (i2c_buffer[5] << 8) | i2c_buffer[4];
+C51 COMPILER V9.54   MAIN                                                                  06/16/2020 11:43:05 PAGE 3   
+
+ 117   4                          vss_time = (i2c_buffer[7] << 8) | i2c_buffer[6];
+ 118   4                          tone_tick = i2c_buffer[9];
+ 119   4                          spindle_dir = i2c_buffer[8];
+ 120   4                          break;
+ 121   4                      case SET_DUTY_CMD:
+ 122   4                          spindle_duty_min = (i2c_buffer[3] << 8) | i2c_buffer[2];
+ 123   4                          spindle_duty_max = (i2c_buffer[5] << 8) | i2c_buffer[4];
+ 124   4                          break;
+ 125   4                      case SET_VSS_TIME_CMD:
+ 126   4                          vss_time = (i2c_buffer[3] << 8) | i2c_buffer[2];
+ 127   4                          if((systemState & 0x1) && (i2c_buffer[4] & 0x1)) {
+ 128   5                              TIM3_Cmd(DISABLE);
+ 129   5                              TIM3_TimerCnt(calcTimer3Count(vss_time));
+ 130   5                              TIM3_Cmd(ENABLE);
+ 131   5                          }
+ 132   4                          break;
+ 133   4                      case SET_SPINDLE_DIR_CMD:
+ 134   4                          if(!(systemState & 0x1)) {
+ 135   5                              spindle_dir = i2c_buffer[2];
+ 136   5                              P0_2 = (spindle_dir & 0x1);
+ 137   5                              P0_3 = ((spindle_dir >> 1)  & 0x1);
+ 138   5                          }
+ 139   4                          break;
+ 140   4                      case SET_TONE_TICK_CMD:
+ 141   4                          tone_tick = i2c_buffer[2];
+ 142   4                          break;
+ 143   4                      case SET_SPEEDUP_CMD:
+ 144   4                          speedup_duty_seg = (i2c_buffer[3] << 8) | i2c_buffer[2];
+ 145   4                          speedup_time_seg = (i2c_buffer[5] << 8) | i2c_buffer[4];
+ 146   4                          break;
+ 147   4                      case SET_SLOWDOWN_CMD:
+ 148   4                          slowdown_duty_seg = (i2c_buffer[3] << 8) | i2c_buffer[2];
+ 149   4                          slowdown_time_seg = (i2c_buffer[5] << 8) | i2c_buffer[4];
+ 150   4                          break;
+ 151   4                      case OPEN_SPINDLE_CMD:
+ 152   4                          // 未设置方向不启动主轴
+ 153   4                          if((spindle_dir & 0x1) && ((spindle_dir >> 1)  & 0x1)) {
+ 154   5                              break;
+ 155   5                          }
+ 156   4                          GPIO_WriteLow(GPIOT0, GPIO_PIN_5);
+ 157   4                          if(i2c_buffer[2]) {
+ 158   5                              playTone(tone_tick);
+ 159   5                          }
+ 160   4                          // 更新状态位
+ 161   4                          systemState |= 0x1;
+ 162   4                          // 设置轴方向
+ 163   4                          P0_2 = (spindle_dir & 0x1);
+ 164   4                          P0_3 = ((spindle_dir >> 1)  & 0x1);
+ 165   4                          // 打开PMW输出功能
+ 166   4                          pwm_duty = 0;
+ 167   4                          PWM_OutPutCmd(PWM_0, ENABLE);
+ 168   4                          PWM_Cmd(PWM0_Group, ENABLE);
+ 169   4                          // 直线加速到最低转速过程
+ 170   4                          while(pwm_duty < spindle_duty_min) {
+ 171   5                              pwm_duty += speedup_duty_seg;
+ 172   5                              pwm_duty = (pwm_duty > spindle_duty_min) ? spindle_duty_min : pwm_duty;
+ 173   5                              PWM_DutyCycleConfig(PWM0_Group, pwm_duty);
+ 174   5                              sysDelay(speedup_time_seg);
+ 175   5                          }
+ 176   4                          // 提示音
+ 177   4                          playTone(1);
+ 178   4                          
+C51 COMPILER V9.54   MAIN                                                                  06/16/2020 11:43:05 PAGE 4   
+
+ 179   4                          if(vss_time > VSS_LOW_LIMIT && vss_time < VSS_HIGH_LIMIT) {
+ 180   5                              // 动态转速定时器
+ 181   5                              TIM3_TimerCnt(calcTimer3Count(vss_time));
+ 182   5                              TIM3_Cmd(ENABLE);
+ 183   5                          }else {
+ 184   5                              // 不启用VSS,直线加速到最高转速
+ 185   5                              while(pwm_duty < spindle_duty_max) {
+ 186   6                                  pwm_duty += speedup_duty_seg;
+ 187   6                                  pwm_duty = (pwm_duty > spindle_duty_max) ? spindle_duty_max : pwm_duty;
+ 188   6                                  PWM_DutyCycleConfig(PWM0_Group, pwm_duty);
+ 189   6                                  sysDelay(speedup_time_seg);
+ 190   6                              }
+ 191   5                              playTone(1);
+ 192   5                          }
+ 193   4                          break;
+ 194   4                      case CLOSE_SPINDLE_CMD:
+ 195   4                          // 关闭VSS定时器
+ 196   4                          TIM3_Cmd(DISABLE);
+ 197   4                          // 减速到0过程    
+ 198   4                          while(pwm_duty > 0) {
+ 199   5                              pwm_duty -= slowdown_duty_seg;
+ 200   5                              pwm_duty = (pwm_duty < 0) ? 0 : pwm_duty;
+ 201   5                              PWM_DutyCycleConfig(PWM0_Group, pwm_duty);
+ 202   5                              sysDelay(slowdown_time_seg);
+ 203   5                          }
+ 204   4                          PWM_OutPutCmd(PWM_0, DISABLE);
+ 205   4                          PWM_Cmd(PWM0_Group, DISABLE);
+ 206   4                          // 关闭输出继电器
+ 207   4                          GPIO_WriteHigh(GPIOT0, GPIO_PIN_2);
+ 208   4                          GPIO_WriteHigh(GPIOT0, GPIO_PIN_3);
+ 209   4                          // 关闭主轴状态指示灯
+ 210   4                          GPIO_WriteHigh(GPIOT0, GPIO_PIN_5);
+ 211   4                          // 更新状态位
+ 212   4                          systemState &= (~0x1);
+ 213   4                          if(i2c_buffer[2]) {
+ 214   5                              playTone(tone_tick);
+ 215   5                          }
+ 216   4                          break;
+ 217   4                      case MAKE_TONE_CMD:
+ 218   4                           // 开启蜂鸣器
+ 219   4                          playTone(i2c_buffer[2]);
+ 220   4                          break;
+ 221   4                      case SWITCH_LED_CMD:
+ 222   4                          P0_5 = (i2c_buffer[2] & 0x1);
+ 223   4                          break;
+ 224   4                      default:
+ 225   4                          break;
+ 226   4                  }
+ 227   3                  i2c_buffer_cursor = 0;
+ 228   3                  BUFFER_CHANGED = FALSE;
+ 229   3              }
+ 230   2          }
+ 231   1      }
+ 232          
+ 233          /*
+ 234          蜂鸣器音频标准A音
+ 235          @param tick 发声次数
+ 236          */
+ 237          void playTone(uint8_t tick) {
+ 238   1          uint8_t i, j;
+ 239   1          for(j = 0; j < tick; j++) {
+ 240   2              for(i = 0; i < 0xFE; i++) {
+C51 COMPILER V9.54   MAIN                                                                  06/16/2020 11:43:05 PAGE 5   
+
+ 241   3                  BEEP_GPIO = GPIO_PIN_HIGH;
+ 242   3                  timerDelay(681);
+ 243   3                  BEEP_GPIO = GPIO_PIN_LOW;
+ 244   3                  timerDelay(1590);
+ 245   3              }
+ 246   2              sysDelay(500);
+ 247   2          }
+ 248   1      }
+ 249          
+ 250          /*
+ 251          计算PWM周期，PWMxP为12位(0~0xFFF),时钟16M，8分频
+ 252          @param microseconds 周期时间(微秒) 范围0~2047us
+ 253          */
+ 254          uint16_t calcPWMPeriod(uint16_t microseconds) {
+ 255   1          return (microseconds << 1) & 0xFFF;
+ 256   1      }
+ 257          
+ 258          /*
+ 259          计算timer3(4/3Mhz)初值
+ 260          定时时间范围0~1048ms
+ 261          */
+ 262          uint16_t calcTimer3Count(uint16_t miliseconds) {
+ 263   1          uint16_t count = 62 * miliseconds;
+ 264   1          miliseconds = (miliseconds & 0x1) ? ((miliseconds - 1)) : miliseconds;
+ 265   1          count += (miliseconds >> 1);
+ 266   1          return (0xFFFF - count);
+ 267   1      }
+ 268          
+ 269          // 优先级0
+ 270          void TIMER0_ISR(void) interrupt TIMER0_VECTOR {
+ 271   1          TIM0_Cmd(DISABLE);
+ 272   1          TIM0_ClearITFlag();
+ 273   1          DelayFlag = FALSE;
+ 274   1      }
+ 275          
+ 276          // 优先级1
+ 277          void TIMER3_ISR(void) interrupt T3_VECTOR{
+ 278   1          T3CON &=~ TIM3_TF3;
+ 279   1          if(pwm_duty >= spindle_duty_max) {
+ 280   2              delta = -DUTY_DELTA_DEFAULT;
+ 281   2          }else if(pwm_duty <= spindle_duty_min){
+ 282   2              delta = +DUTY_DELTA_DEFAULT;
+ 283   2          }
+ 284   1          pwm_duty += delta;
+ 285   1          PWM_DutyCycleConfig(PWM0_Group, pwm_duty);
+ 286   1      }
+ 287          
+ 288          
+ 289          // 优先级3 SDA P01
+ 290          void SDA_ISR() interrupt INT1_VECTOR {
+ 291   1          // 清除中断
+ 292   1          PINTF0 &= 0xFD;
+ 293   1          // I2C握手信号
+ 294   1          if(!(I2C_SCL)) {
+ 295   2              return;
+ 296   2          }
+ 297   1          // 起始和终止ACK都将字节缓存清空
+ 298   1          i2c_tick = 0;
+ 299   1          i2c_byte = 0x00;
+ 300   1          // START = SDA下降沿 & SCL高电平
+ 301   1          // STOP = SDA 上升沿 & SCL高电平  
+ 302   1          if(!I2C_SDA && I2C_STATE == I2C_STOP) {
+C51 COMPILER V9.54   MAIN                                                                  06/16/2020 11:43:05 PAGE 6   
+
+ 303   2              I2C_STATE = I2C_START;
+ 304   2              i2c_buffer_cursor = 0;
+ 305   2          }else {
+ 306   2              I2C_STATE = I2C_STOP;
+ 307   2              BUFFER_CHANGED = TRUE;
+ 308   2          }
+ 309   1      }
+ 310          
+ 311          // 优先级2 SCL P00
+ 312          void SCL_ISR() interrupt INT0_VECTOR {
+ 313   1          // 清除中断
+ 314   1          PINTF0 &= 0xFE;
+ 315   1          // I2C数据(SDA)只允许在SCL低电平发生变化
+ 316   1          // I2C_STATE == I2C_STOP
+ 317   1          if(I2C_STATE) {
+ 318   2              return;
+ 319   2          }
+ 320   1          // i2c_tick改变之前，此处为第9个时钟
+ 321   1          if(i2c_tick == 8) {
+ 322   2              // 在第9个时钟返回ACK信号，距上升沿~4.4us
+ 323   2              // 设置(SDA)P01 PD输出
+ 324   2              P0M0 = P0M0 & 0x0F | 0x80;
+ 325   2              // 拉低SDA 返回ACK信号
+ 326   2              I2C_SDA = 0;
+ 327   2          }
+ 328   1      
+ 329   1          // 采样数据,距上升沿~6.6us
+ 330   1          i2c_byte |= ((uint8_t)I2C_SDA << ((~i2c_tick) & 0x7));
+ 331   1          i2c_tick++;
+ 332   1          
+ 333   1          if(i2c_tick == 8) {
+ 334   2              // 在第8个时钟复制数据
+ 335   2              i2c_buffer[i2c_buffer_cursor++] = i2c_byte;
+ 336   2              // 关SCL_ISR
+ 337   2              EX1 = 0;
+ 338   2          }else if(i2c_tick == 9) {
+ 339   2              // 重置收缓存字节
+ 340   2              i2c_byte = 0x00;
+ 341   2              i2c_tick = 0;
+ 342   2              // 清除SCL_ISR重新打开
+ 343   2              PINTF0 &= 0xFD;
+ 344   2              EX1 = 1;
+ 345   2              // 恢复P00 P01 SMT上拉输入
+ 346   2              P0M0 = 0x66;
+ 347   2          }
+ 348   1      }
+ 349          
+ 350          /*
+ 351          定时器0(16MHz)延时，函数调用开销9.75~10us
+ 352          @param microseconds 微秒 实际延时时间[0-4095]us + 10us
+ 353          */
+ 354          void timerDelay(uint16_t microseconds) {
+ 355   1          DelayFlag =  TRUE;
+ 356   1          TIM0_TimerCnt((0xFFFF - (microseconds << 4)));
+ 357   1          TIM0_Cmd(ENABLE);
+ 358   1          while(DelayFlag);
+ 359   1      }
+ 360          
+ 361          /*
+ 362          软件延时，误差0.1ms
+ 363          @param miliseconds 毫秒(0~0xFFFF)
+ 364          */
+C51 COMPILER V9.54   MAIN                                                                  06/16/2020 11:43:05 PAGE 7   
+
+ 365          void sysDelay(uint16_t miliseconds) {
+ 366   1          uint16_t i;
+ 367   1          for(; miliseconds > 0; miliseconds--) {
+ 368   2               for(i = 1596; i > 0; i--);
+ 369   2          }
+ 370   1      }
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =   1505    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =     16    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =      8       3
+   IDATA SIZE       =     33    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

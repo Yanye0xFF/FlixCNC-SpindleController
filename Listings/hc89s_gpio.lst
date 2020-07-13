@@ -1,0 +1,357 @@
+C51 COMPILER V9.54   HC89S_GPIO                                                            06/16/2020 11:43:05 PAGE 1   
+
+
+C51 COMPILER V9.54, COMPILATION OF MODULE HC89S_GPIO
+OBJECT MODULE PLACED IN .\Objects\hc89s_gpio.obj
+COMPILER INVOKED BY: D:\keilC51\C51\BIN\C51.EXE hc89s_gpio.c OPTIMIZE(8,SPEED) BROWSE DEBUG OBJECTEXTEND PRINT(.\Listing
+                    -s\hc89s_gpio.lst) OBJECT(.\Objects\hc89s_gpio.obj)
+
+line level    source
+
+   1          /**
+   2          *                                                                        模块性能介绍
+   3          *       1、输入（无SMT）模式下VDD=5V时，低电平即输入低电压（VIL1）范围为0~1.5V、高电平即输入
+   4          *          高电压（VIH1）范围为3.5~5V。
+   5          *       2、输入（SMT）模式下VDD=5V时，低电平即输入低电压（VIL1）范围为0~1V、高电平即输入高电
+   6          *          压（VIH1）范围为4~5V。
+   7          *       3、HC89S003上电复位以及其它复位功能的复位，所有的IO相关寄存器都会恢复为默认值。
+   8          *       ************************************************************************************
+   9          *                                                                        应用注意事项
+  10          *       1、在使用仿真器时，与JTAG复用的IO口会有读取或写入数据异常，因此建议使用仿真器时不要
+  11          *          操作这几个IO口。断开仿真器使用电源供电即可以正常操作。
+  12          *       2、分配到P0.0/P0.1/P0.2这三个管脚上的功能脚、外部中断输入、故障检测引脚都受消抖控制。
+  13          *       3、P2.3/P2.4/P2.5/P2.7四个口带上下拉同时使能功能，但没有带上拉输入以及带下拉输入，不
+  14          *      过可以使用施密特带下拉输入以及施密特带上拉输入，使用时请注意（详见数据手册）。
+  15          *       ************************************************************************************
+  16          *                                                                         函数总览
+  17          *       GPIO_DeInit()                                   //恢复GPIOx寄存器到默认值
+  18          *       GPIO_Init()                                             //对一组端口中的一个或多个IO设置模式
+  19          *       GPIO_Write()                                    //对一组端口赋值
+  20          *       GPIO_WriteHigh()                                //对一组端口中的PIN置高
+  21          *       GPIO_WriteLow()                                 //对一组端口中的PIN置低
+  22          *       GPIO_WriteReverse()                             //对一组端口中的PIN取反
+  23          *       GPIO_ReadInputData()                    //获取当前端口组的输入状态
+  24          *       GPIO_ReadOutputData()                   //获取当前端口组的输出状态
+  25          *       GPIO_ReadInputPin()                             //获取一组端口中的一个端口的状态
+  26          *       GPIO_P02ExternalPullConfig()    //设置P02端口上拉电阻阻值
+  27          *       GPIO_GPIO0DbcTimerConfig()              //设置端口消抖功能的消抖时间只有P00，P01，P02有此功能
+  28          *       ************************************************************************************
+  29          *                                                                         计算公式
+  30          *       1、P0xDBCT [5:0]配置的消抖时间是一个范围。
+  31          *          分频系数*Tosc*P0xDBCT[5:0]-Tosc<消抖时间<分频系数*Tosc*(P0xDBCT[5:0]+1)-Tosc。
+  32          *       ************************************************************************************
+  33          *                                                                      客户服务
+  34          *        感谢您使用我们的单片机，若发现错误或对函数的使用存在疑问。请添加上海芯圣电子官方QQ。
+  35          *       ****************************技术支持群：201030494**********************************
+  36          *   ************************************************************************************
+  37          **/
+  38          
+  39          #include "hc89s_gpio.h"
+  40          
+  41          /**
+  42            * @说明       恢复GPIOx寄存器到默认值
+  43            * @参数       GPIOx : 初始化的端口组（x:0-2）
+  44            *                     GPIOT0  //端口0组
+  45            *                     GPIOT1  //端口1组
+  46            *                     GPIOT2  //端口2组
+  47            * @返回值 无
+  48            * @注         无
+  49            */
+  50          void GPIO_DeInit(GPIO_TypeDef GPIOx)
+  51          {
+  52   1              if(GPIOx == GPIOT0)
+  53   1              {
+  54   2                      P0      = GPIO_P0_RESET_VALUE;
+C51 COMPILER V9.54   HC89S_GPIO                                                            06/16/2020 11:43:05 PAGE 2   
+
+  55   2                      PM0F    = GPIO_PM0F_RESET_VALUE;
+  56   2              }else if(GPIOx == GPIOT1)
+  57   1              {
+  58   2                      P1              = GPIO_P1_RESET_VALUE;
+  59   2                      PM1F    = GPIO_PM1F_RESET_VALUE;
+  60   2              }else if(GPIOx == GPIOT2)
+  61   1              {
+  62   2                      P2              = GPIO_P2_RESET_VALUE;
+  63   2                      PM2F    = GPIO_PM2F_RESET_VALUE;        
+  64   2              }
+  65   1      }
+  66          
+  67          /**
+  68            * @说明       对一组端口中的一个或多个IO设置模式
+  69            * @参数       GPIOx : 初始化的端口组（x:0-2）
+  70            *                     GPIOT0  //端口0组
+  71            *                     GPIOT1  //端口1组
+  72            *                     GPIOT2  //端口2组
+  73            * @参数       GPIO_PIN :      初始化的端口号
+  74            *                     GPIO_PIN_0      //选择端口0
+  75            *                     GPIO_PIN_1  //选择端口1
+  76            *                     GPIO_PIN_2  //选择端口2
+  77            *                     GPIO_PIN_3  //选择端口3
+  78            *                     GPIO_PIN_4  //选择端口4
+  79            *                     GPIO_PIN_5  //选择端口5
+  80            *                     GPIO_PIN_6  //选择端口6
+  81            *                     GPIO_PIN_7  //选择端口7
+  82            * @参数       GPIO_Mode : 初始化模式
+  83            *                     GPIO_MODE_IN                    //数字输入
+  84            *                     GPIO_MODE_IN_PD         //带下拉输入
+  85            *                     GPIO_MODE_IN_PU         //带上拉输入
+  86            *                     GPIO_MODE_IN_AN         //模拟输入
+  87            *                     GPIO_MODE_IN_SMT                //数字输入   SMT
+  88            *                     GPIO_MODE_IN_PD_SMT     //带下拉输入 SMT
+  89            *                     GPIO_MODE_IN_PU_SMT     //带上拉输入 SMT
+  90            *                     GPIO_MODE_IN_AN_PU_PD   //模拟输入上下拉同时打开，B版以后芯片支持
+  91            *                     GPIO_MODE_OUT_PP                //推挽输出
+  92            *                     GPIO_MODE_OUT_OD                //开漏输出
+  93            *                     GPIO_MODE_OUT_OD_PU     //开漏带上拉输出
+  94            * @返回值 无
+  95            * @注         无
+  96            */
+  97          void GPIO_Init(GPIO_TypeDef GPIOx,GPIO_Pin_TypeDef GPIO_PIN,GPIO_Mode_TypeDef GPIO_Mode)
+  98          {
+  99   1              u8  i;
+ 100   1              u8  xdata *gpioset;
+ 101   1              gpioset = 0xFF00 | ((GPIOx - 1)<<3);
+ 102   1              for(i=0;i<8;i++){
+ 103   2                      if((GPIOx == GPIOT1)&&(i>1))break;
+ 104   2                      if(GPIO_PIN&0x01){
+ 105   3                              *(gpioset+i/2) =  ((*(gpioset+i/2)) & (0xF0 >> ((i%2)*0x04))) | (GPIO_Mode << ((i%2)*0x04));
+ 106   3                      }
+ 107   2                      GPIO_PIN >>= 1;
+ 108   2              }
+ 109   1      }
+ 110          
+ 111          /**
+ 112            * @说明       对一组端口赋值
+ 113            * @参数       GPIOx : 初始化的端口组（x:0-2）
+ 114            *                     GPIOT0  //端口0组
+ 115            *                     GPIOT1  //端口1组
+ 116            *                     GPIOT2  //端口2组
+C51 COMPILER V9.54   HC89S_GPIO                                                            06/16/2020 11:43:05 PAGE 3   
+
+ 117            * @参数       Value :         端口输出状态
+ 118            *                     取值范围：0x00 - 0xFF
+ 119            * @返回值 无
+ 120            * @注         无
+ 121            */
+ 122          void GPIO_Write(GPIO_TypeDef GPIOx,u8 Value)
+ 123          {
+ 124   1              if(GPIOx == GPIOT0)P0           = Value;
+ 125   1              else if(GPIOx == GPIOT1)P1  = Value;
+ 126   1              else if(GPIOx == GPIOT2)P2  = Value;
+ 127   1      }
+ 128          
+ 129          
+ 130          /**
+ 131            * @说明       对一组端口中的PIN置高
+ 132            * @参数       GPIOx : 设置的端口组（x:0-2）
+ 133            *                 GPIOT0      //端口0组
+ 134            *                     GPIOT1  //端口1组
+ 135            *                     GPIOT2  //端口2组
+ 136            * @参数       GPIO_PIN :      设置的端口号
+ 137            *                     GPIO_PIN_0      //选择端口0
+ 138            *                     GPIO_PIN_1      //选择端口1
+ 139            *                     GPIO_PIN_2      //选择端口2
+ 140            *                     GPIO_PIN_3      //选择端口3
+ 141            *                     GPIO_PIN_4      //选择端口4
+ 142            *                     GPIO_PIN_5      //选择端口5
+ 143            *                     GPIO_PIN_6      //选择端口6
+ 144            *                     GPIO_PIN_7      //选择端口7
+ 145            * @返回值 无
+ 146            * @注         无
+ 147            */
+ 148          void GPIO_WriteHigh(GPIO_TypeDef GPIOx,GPIO_Pin_TypeDef GPIO_PIN)
+ 149          {
+ 150   1              if(GPIOx == GPIOT0)P0   |= GPIO_PIN;
+ 151   1              else if(GPIOx == GPIOT1)P1   |= GPIO_PIN;
+ 152   1              else if(GPIOx == GPIOT2)P2   |= GPIO_PIN;
+ 153   1      }
+ 154          
+ 155          /**
+ 156            * @说明       对一组端口中的PIN置低
+ 157            * @参数       GPIOx : 设置的端口组（x:0-2）
+ 158            *                 GPIOT0      //端口0组
+ 159            *                     GPIOT1  //端口1组
+ 160            *                     GPIOT2  //端口2组
+ 161            * @参数       GPIO_PIN :      设置的端口号
+ 162            *                     GPIO_PIN_0      //选择端口0
+ 163            *                     GPIO_PIN_1      //选择端口1
+ 164            *                     GPIO_PIN_2      //选择端口2
+ 165            *                     GPIO_PIN_3      //选择端口3
+ 166            *                     GPIO_PIN_4      //选择端口4
+ 167            *                     GPIO_PIN_5      //选择端口5
+ 168            *                     GPIO_PIN_6      //选择端口6
+ 169            *                     GPIO_PIN_7      //选择端口7
+ 170            * @返回值 无
+ 171            * @注         无
+ 172            */
+ 173          void GPIO_WriteLow(GPIO_TypeDef GPIOx,GPIO_Pin_TypeDef GPIO_PIN)
+ 174          {
+ 175   1              if(GPIOx == GPIOT0)P0   &=~ GPIO_PIN;
+ 176   1              else if(GPIOx == GPIOT1)P1   &=~ GPIO_PIN;
+ 177   1              else if(GPIOx == GPIOT2)P2   &=~ GPIO_PIN;
+ 178   1      }
+C51 COMPILER V9.54   HC89S_GPIO                                                            06/16/2020 11:43:05 PAGE 4   
+
+ 179          
+ 180          /**
+ 181            * @说明       对一组端口中的PIN取反
+ 182            * @参数       GPIOx : 设置的端口组（x:0-2）
+ 183            *                 GPIOT0      //端口0组
+ 184            *                     GPIOT1  //端口1组
+ 185            *                     GPIOT2  //端口2组
+ 186            * @参数       GPIO_PIN :      设置的端口号
+ 187            *                     GPIO_PIN_0      //选择端口0
+ 188            *                     GPIO_PIN_1      //选择端口1
+ 189            *                     GPIO_PIN_2      //选择端口2
+ 190            *                     GPIO_PIN_3      //选择端口3
+ 191            *                     GPIO_PIN_4      //选择端口4
+ 192            *                     GPIO_PIN_5      //选择端口5
+ 193            *                     GPIO_PIN_6      //选择端口6
+ 194            *                     GPIO_PIN_7      //选择端口7
+ 195            * @返回值 无
+ 196            * @注         无
+ 197            */
+ 198          void GPIO_WriteReverse(GPIO_TypeDef GPIOx,GPIO_Pin_TypeDef GPIO_PIN)
+ 199          {
+ 200   1              if(GPIOx == GPIOT0)P0   ^= GPIO_PIN;
+ 201   1              else if(GPIOx == GPIOT1)P1   ^= GPIO_PIN;
+ 202   1              else if(GPIOx == GPIOT2)P2   ^= GPIO_PIN;
+ 203   1      }
+ 204          
+ 205          /**
+ 206            * @说明       获取当前端口组的输入状态
+ 207            * @参数       GPIOx : 设置的端口组（x:0-2）
+ 208            *                 GPIOT0      //端口0组
+ 209            *                     GPIOT1  //端口1组
+ 210            *                     GPIOT2  //端口2组
+ 211            * @返回值 端口组输入状态
+ 212            *                     取值范围：      0x00 - 0xFF
+ 213            * @注         无
+ 214            */
+ 215          u8 GPIO_ReadInputData(GPIO_TypeDef GPIOx)
+ 216          {
+ 217   1              if(GPIOx == GPIOT0)return P0;
+ 218   1              else if(GPIOx == GPIOT1)return P1;
+ 219   1              else if(GPIOx == GPIOT2)return P2;
+ 220   1              return 0x00;
+ 221   1      }
+ 222          
+ 223          /**
+ 224            * @说明       获取当前端口组的输出状态
+ 225            * @参数       GPIOx : 设置的端口组（x:0-2）
+ 226            *             GPIOT0  //端口0组
+ 227            *                     GPIOT1  //端口1组
+ 228            *                     GPIOT2  //端口2组
+ 229            * @返回值 端口组输出状态
+ 230            *                     取值范围：      0x00 - 0xFF
+ 231            * @注         无
+ 232            */
+ 233          u8 GPIO_ReadOutputData(GPIO_TypeDef GPIOx)
+ 234          {
+ 235   1              if(GPIOx == GPIOT0)return P0;
+ 236   1              else if(GPIOx == GPIOT1)return P1;
+ 237   1              else if(GPIOx == GPIOT2)return P2;
+ 238   1              return 0x00;
+ 239   1      }
+ 240          
+C51 COMPILER V9.54   HC89S_GPIO                                                            06/16/2020 11:43:05 PAGE 5   
+
+ 241          
+ 242          /**
+ 243            * @说明       获取一组端口中的一个端口的状态
+ 244            * @参数       GPIOx : 端口组（x:0-2）
+ 245            *                 GPIOT0      //端口0组
+ 246            *                     GPIOT1  //端口1组
+ 247            *                     GPIOT2  //端口2组
+ 248            * @参数       GPIO_PIN :      端口号
+ 249            *                     GPIO_PIN_0      //选择端口0
+ 250            *                     GPIO_PIN_1      //选择端口1
+ 251            *                     GPIO_PIN_2      //选择端口2
+ 252            *                     GPIO_PIN_3      //选择端口3
+ 253            *                     GPIO_PIN_4      //选择端口4
+ 254            *                     GPIO_PIN_5      //选择端口5
+ 255            *                     GPIO_PIN_6      //选择端口6
+ 256            *                     GPIO_PIN_7      //选择端口7
+ 257            * @返回值 端口状态
+ 258            *                     取值范围：      0x00 - 0x01
+ 259            * @注         无
+ 260            */
+ 261          bool GPIO_ReadInputPin(GPIO_TypeDef GPIOx,GPIO_Pin_TypeDef GPIO_PIN)
+ 262          {
+ 263   1              if(GPIOx == GPIOT0)GPIO_PIN &= P0;
+ 264   1              else if(GPIOx == GPIOT1)GPIO_PIN &= P1;
+ 265   1              else if(GPIOx == GPIOT2)GPIO_PIN &= P2;
+ 266   1              if(GPIO_PIN)return 1;
+ 267   1              return 0;
+ 268   1      }
+ 269          
+ 270          /**
+ 271            * @说明       设置P02端口上拉电阻阻值
+ 272            * @参数       Res_Value : 电阻值
+ 273            *             R050K   //上拉电阻50K
+ 274            *                     R100K   //上拉电阻100K
+ 275            *                     R150K   //上拉电阻150K
+ 276            *                     R300K   //上拉电阻300K
+ 277            * @返回值 无
+ 278            * @注         无
+ 279            */
+ 280          void GPIO_P02ExternalPullConfig(GPIO_PullResValve Res_Value)
+ 281          {
+ 282   1                      P0LPU = (P0LPU&(~GPIO_P02PU))|(Res_Value&GPIO_P02PU);   
+ 283   1      }
+ 284          
+ 285          /**
+ 286            * @说明       设置端口消抖功能的消抖时间只有P00，P01，P02有此功能
+ 287            * @参数       GPIO_PIN :      端口号（x:0-2）
+ 288            *                     GPIO_PIN_0      //选择端口0
+ 289            *                     GPIO_PIN_1      //选择端口1
+ 290            *                     GPIO_PIN_2      //选择端口2
+ 291            * @参数       ClockDevice : 消抖时钟分频
+ 292                                  FOSC_1          //消抖时钟1分频
+ 293                                  FOSC_4          //消抖时钟4分频
+ 294                                  FOSC_16         //消抖时钟16分频
+ 295                                  FOSC_64         //消抖时钟64分频
+ 296            * @参数       Value : 消抖时间
+ 297            *                     取值范围: 0x00 - 0x3F
+ 298            * @返回值 无
+ 299            * @注         消抖时间（分频系数 * Tosc*P0xDBCT [5:0] - Tosc <消抖时间<分频系数 * Tosc* (P0xDBCT [5:0] +1) -Tos
+             -c）
+ 300            */
+ 301          void GPIO_GPIO0DbcTimerConfig(GPIO_Pin_TypeDef GPIO_PIN,GPIO_DbcClockDevice ClockDevice,u8 Value)
+C51 COMPILER V9.54   HC89S_GPIO                                                            06/16/2020 11:43:05 PAGE 6   
+
+ 302          {
+ 303   1                      switch(GPIO_PIN)
+ 304   1                      {
+ 305   2                              case GPIO_PIN_0:
+ 306   2                                                              P00DBC &= 0x00;
+ 307   2                                                              P00DBC |= (ClockDevice&GPIO_P0xDBCLK);
+ 308   2                                                              P00DBC |= (Value&GPIO_P0xDBCT);
+ 309   2                                                              break;
+ 310   2                              case GPIO_PIN_1:
+ 311   2                                                              P01DBC &= 0x00;
+ 312   2                                                              P01DBC |= (ClockDevice&GPIO_P0xDBCLK);
+ 313   2                                                              P01DBC |= (Value&GPIO_P0xDBCT);
+ 314   2                                                              break;
+ 315   2                              case GPIO_PIN_2:
+ 316   2                                                              P02DBC &= 0x00;
+ 317   2                                                              P02DBC |= (ClockDevice&GPIO_P0xDBCLK);
+ 318   2                                                              P02DBC |= (Value&GPIO_P0xDBCT);
+ 319   2                                                              break;
+ 320   2                              default:break;
+ 321   2                      }
+ 322   1      }
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    377    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----       1
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

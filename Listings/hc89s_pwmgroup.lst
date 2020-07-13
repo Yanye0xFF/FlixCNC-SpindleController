@@ -1,0 +1,594 @@
+C51 COMPILER V9.54   HC89S_PWMGROUP                                                        06/16/2020 11:43:05 PAGE 1   
+
+
+C51 COMPILER V9.54, COMPILATION OF MODULE HC89S_PWMGROUP
+OBJECT MODULE PLACED IN .\Objects\hc89s_pwmgroup.obj
+COMPILER INVOKED BY: D:\keilC51\C51\BIN\C51.EXE hc89s_pwmgroup.c OPTIMIZE(8,SPEED) BROWSE DEBUG OBJECTEXTEND PRINT(.\Lis
+                    -tings\hc89s_pwmgroup.lst) OBJECT(.\Objects\hc89s_pwmgroup.obj)
+
+line level    source
+
+   1          /**
+   2          *                                                                        模块性能介绍
+   3          *       1、HC89S003集成了3个12位PWM模块PWM0、PWM1、PWM2，每个模块各有一个计数器，三个PWM模块
+   4          *          的功能以及操作完全一样。
+   5          *       2、提供每个PWM周期溢出中断，但中断共用同一向量入口。
+   6          *       3、提供出错帧测功能可紧急关闭PWM输出。
+   7          *       ************************************************************************************
+   8          *                                                                        应用注意事项
+   9          *       1、互补输出模式及独立输出模式都可受故障检测脚控制。
+  10          *       2、修改PWM0工作模式时建议先关闭PWM0模块。
+  11          *       3、关闭时，PWM0计数停止，输出立即关闭。打开时，PWM0计数器都重新从1开始计数，输出受
+  12          *          PWM0_OEN和PWM01_OEN控制。
+  13          *       4、PWM0允许输出，必须在PWM0_EN置1下才有效，否则PWM0输出关闭状态（输出时对应端口必须
+  14          *          设为输出模式）；即使都禁止输出，只要PWM0_EN位被使能，PWM0都可以溢出中断，即此时
+  15          *          PWM0可以作为定时器使用，此控制位修改立即生效。
+  16          *       5、对于独立模式，输出模式选择位同样有效，但与互补模式不同的是有效期间为占空比期间；
+  17          *          而互补模式中对于PWM0的有效期间为占空比期间，PWM01的有效期间为占空比的互补期间。
+  18          *       ************************************************************************************
+  19          *                                                                      函数总览
+  20          *       PWM_DeInit()                                                    //恢复PWM寄存器到默认值
+  21          *       PWM_Init()                                                              //根据指定的参数初始化PWM
+  22          *       PWM_FLTConfig()                                                 //PWM组故障检测相关设置
+  23          *       PWM_PinRemapConfig()                                    //配置PWM输出的管脚映射
+  24          *       PWM_OutPutCmd()                                                 //PWM端口输出使能/失能
+  25          *       PWM_PeriodConfig()                                              //PWM周期设置
+  26          *       PWM_DutyCycleConfig()                                   //PWM占空比设置
+  27          *       PWM_DeadZoneConfig()                                    //PWM死区时间设置
+  28          *       PWM_Cmd()                                                               //使能或失能PWM模块
+  29          *       PWM_ITCmd()                                                             //使能或失能PWM中断
+  30          *       PWM_GetITFlag()                                                 //获取PWM中断标志位
+  31          *       PWM_ClearITFlag()                                               //清除PWM中断标志位
+  32          *       PWM_GetFLTFlag()                                                //获取PWM故障状态，关闭中/正常运行
+  33          *       PWM_ITPriorityConfig();                                 //PWM中断优先级配置
+  34          *       ************************************************************************************
+  35          *                                                                          计算公式
+  36          *       1、周期计算
+  37          *          周期 = PWMxP / (Fosc / PWM分频系数)                   (x = 0,1,2)
+  38          *       2、有效电平计算（即占空比）
+  39          *          有效电平 = PWMxD / (Fosc / PWM分频系数)               (x = 0,1,2)
+  40          *          占空比 = 有效电平 / 周期
+  41          *       3、死区调节计算
+  42          *          死区 = PWMxDT  / (Fosc / PWM分频系数)                 (x = 0,1,2)
+  43          *          死区时间 = 死区 / 周期 
+  44          *       4、PWM定时时间计算(PWM作为定时器使用时)
+  45          *          定时时间 = PWMxP / (Fosc / PWM分频系数)               (x = 0,1,2)
+  46          *       ************************************************************************************
+  47          **/
+  48          
+  49          #include "hc89s_pwmgroup.h"
+  50          
+  51          /**
+  52            * @说明       恢复PWM寄存器到默认值
+  53            * @参数       无
+  54            * @返回值 无
+C51 COMPILER V9.54   HC89S_PWMGROUP                                                        06/16/2020 11:43:05 PAGE 2   
+
+  55            * @注         无
+  56            */
+  57          void PWM_DeInit(PWM_Group_TypeDef PWM_Group)
+  58          {
+  59   1              switch(PWM_Group)
+  60   1              {
+  61   2                      case PWM0_Group:
+  62   2                                      PWM0EN = PWMX_EN_RESET_VALUE;
+  63   2                                      PWM0C = PWMX_C_RESET_VALUE;
+  64   2                                      PWM0P = PWMX_P_RESET_VALUE;
+  65   2                                      PWM0D = PWMX_D_RESET_VALUE;
+  66   2                                      PWM0DT = PWMX_DT_RESET_VALUE;
+  67   2                                      PWM0_MAP = PWMX_PWMXMAP_RESET_VALUE;
+  68   2                                      PWM01_MAP = PWMX_PWMX1MAP_RESET_VALUE;                          
+  69   2                                      break;
+  70   2                      case PWM1_Group:
+  71   2                                      PWM1EN = PWMX_EN_RESET_VALUE;
+  72   2                                      PWM1C = PWMX_C_RESET_VALUE;
+  73   2                                      PWM1P = PWMX_P_RESET_VALUE;
+  74   2                                      PWM1D = PWMX_D_RESET_VALUE;
+  75   2                                      PWM1DT = PWMX_DT_RESET_VALUE;
+  76   2                                      PWM1_MAP = PWMX_PWMXMAP_RESET_VALUE;
+  77   2                                      PWM11_MAP = PWMX_PWMX1MAP_RESET_VALUE;                  
+  78   2                                      break;
+  79   2                      case PWM2_Group:
+  80   2                                      PWM2EN = PWMX_EN_RESET_VALUE;
+  81   2                                      PWM2C = PWMX_C_RESET_VALUE;
+  82   2                                      PWM2P = PWMX_P_RESET_VALUE;
+  83   2                                      PWM2D = PWMX_D_RESET_VALUE;
+  84   2                                      PWM2DT = PWMX_DT_RESET_VALUE;
+  85   2                                      PWM2_MAP = PWMX_PWMXMAP_RESET_VALUE;
+  86   2                                      PWM21_MAP = PWMX_PWMX1MAP_RESET_VALUE;                  
+  87   2                                      break;
+  88   2                      default:break;  
+  89   2      
+  90   2              }
+  91   1      }
+  92          
+  93          /**
+  94            * @说明       根据指定的参数初始化PWM
+  95            * @参数       Group ：PWM组
+  96            *                     PWM0_Group              //PWM0组
+  97            *                     PWM1_Group              //PWM1组
+  98            *                     PWM2_Group              //PWM2组
+  99            * @参数       ClkDevice ：    PWM时钟分频系数
+ 100            *                     PWMCK_1         //PWM时钟为OSC时钟1分频
+ 101            *                     PWMCK_8         //PWM时钟为OSC时钟8分频
+ 102            *                     PWMCK_32        //PWM时钟为OSC时钟32分频
+ 103            *                     PWMCK_128       //PWM时钟为OSC时钟128分频
+ 104            * @参数       GroupOutMode ： PWM输出模式
+ 105            *                     PWMX_DISABLE_PWMX1_DISABLE      //例：PWM0组。即PWM0不输出，PWM01不输出
+ 106            *                     PWMX_ENABLE_PWMX1_DISABLE       //例：PWM0组。即PWM0输出，PWM01不输出
+ 107            *                     PWMX_DISABLE_PWMX1_ENABLE       //例：PWM0组。即PWM0不输出，PWM01输出
+ 108            *                     PWMX_ENABLE_PWMX1_ENABLE        //例：PWM0组。即PWM0输出，PWM01输出
+ 109            * @参数       GroupMode ：    PWM组模式
+ 110            *                     COMPLEMENTARY_MODE      //互补模式
+ 111            *                     INDEPENDENT_MODE        //独立模式
+ 112            * @返回值 无
+ 113            * @注         无
+ 114            */
+ 115          void PWM_Init(PWM_Group_TypeDef Group,PWM_ClkDevice_TypeDef ClkDevice,PWM_VoltValid_TypeDef GroupOutMode,P
+             -WM_GroupMode_TypeDef GroupMode)
+C51 COMPILER V9.54   HC89S_PWMGROUP                                                        06/16/2020 11:43:05 PAGE 3   
+
+ 116          {
+ 117   1              switch(Group)
+ 118   1              {
+ 119   2                      case PWM0_Group:
+ 120   2                                              PWM0C   = (PWM0C&(~(PWMX_CKX|PWMX_XS)))|(ClkDevice&PWMX_CKX)|(GroupOutMode&PWMX_XS);
+ 121   2                                              PWM0EN  = (PWM0EN&(~PWMX_XM))|(GroupMode&PWMX_XM);
+ 122   2                                              break;
+ 123   2                      case PWM1_Group:
+ 124   2                                              PWM1C   = (PWM1C&(~(PWMX_CKX|PWMX_XS)))|(ClkDevice&PWMX_CKX)|(GroupOutMode&PWMX_XS);
+ 125   2                                              PWM1EN  = (PWM1EN&(~PWMX_XM))|(GroupMode&PWMX_XM);
+ 126   2                                              break;
+ 127   2                      case PWM2_Group:
+ 128   2                                              PWM1C   = (PWM2C&(~(PWMX_CKX|PWMX_XS)))|(ClkDevice&PWMX_CKX)|(GroupOutMode&PWMX_XS);
+ 129   2                                              PWM1EN  = (PWM1EN&(~PWMX_XM))|(GroupMode&PWMX_XM);
+ 130   2                                              break;
+ 131   2                      default:break;
+ 132   2              }
+ 133   1      }
+ 134          
+ 135          /**
+ 136            * @说明       PWM组故障检测相关设置
+ 137            * @参数       Group ：PWM组
+ 138            *                     PWM0_Group              //PWM0组
+ 139            *                     PWM1_Group              //PWM1组
+ 140            *                     PWM2_Group              //PWM2组
+ 141            * @参数       FltPinVolt ：   PWM故障检测的电平
+ 142            *                     FLFPIN_LOW_PWMOFF       //故障检测脚为低电平时，故障
+ 143            *                     FLFPIN_HIGH_PWMOFF      //故障检测脚为高电平时，故障
+ 144            * @参数       FltPWMOut ：    故障时PWM输出电平状态
+ 145            *                     PWMX_PWX1_ALL_LOW       //例：PWM0组。即故障时PWM0，PWM01输出高电平
+ 146            *                     PWMX_LOW_PWX1_HIGH      //例：PWM0组。即故障时PWM0输出低电平，PWM01输出高电平
+ 147            *                     PWMX_HIGH_PWX1_LOW      //例：PWM0组。即故障时PWM0输出高电平，PWM01输出低电平
+ 148            *                     PWMX_PWX1_ALL_HIGH      //例：PWM0组。即故障时PWM0，PWM01输出低电平
+ 149            * @参数       NewState ：             故障检测新状态
+ 150            *                     DISABLE         //失能
+ 151            *                     ENABLE          //使能
+ 152            * @返回值 无
+ 153            * @注         无
+ 154            */
+ 155          void PWM_FLTConfig(PWM_Group_TypeDef Group,PWM_FltPinVolt_TypeDef FltPinVolt,PWM_FltPWMOut_TypeDef FltPWMO
+             -ut,FunctionalState NewState)
+ 156          {
+ 157   1              switch(Group)
+ 158   1              {
+ 159   2                      case PWM0_Group:
+ 160   2                                              PWM0EN  = (PWM0EN&(~PWMX_FLTX_MODE))|(FltPWMOut&PWMX_FLTX_MODE);
+ 161   2                                              if(NewState)PWM0EN |= PWMX_EFLTX;
+ 162   2                                              else PWM0EN &=~ PWMX_EFLTX; 
+ 163   2                                              PWM0C   = (PWM0C&(~PWMX_FLTXC))|(FltPinVolt&PWMX_FLTXC);
+ 164   2                                              break;
+ 165   2                      case PWM1_Group:
+ 166   2                                              PWM1EN  = (PWM0EN&(~PWMX_FLTX_MODE))|(FltPWMOut&PWMX_FLTX_MODE);
+ 167   2                                              if(NewState)PWM1EN |= PWMX_EFLTX;
+ 168   2                                              else PWM1EN &=~ PWMX_EFLTX; 
+ 169   2                                              PWM1C   = (PWM1C&(~PWMX_FLTXC))|(FltPinVolt&PWMX_FLTXC);
+ 170   2                                              break;
+ 171   2                      case PWM2_Group:
+ 172   2                                              PWM2EN  = (PWM2EN&(~PWMX_FLTX_MODE))|(FltPWMOut&PWMX_FLTX_MODE);
+ 173   2                                              if(NewState)PWM2EN |= PWMX_EFLTX;
+ 174   2                                              else PWM2EN &=~ PWMX_EFLTX; 
+ 175   2                                              PWM2C   = (PWM2C&(~PWMX_FLTXC))|(FltPinVolt&PWMX_FLTXC);
+ 176   2                                              break;
+C51 COMPILER V9.54   HC89S_PWMGROUP                                                        06/16/2020 11:43:05 PAGE 4   
+
+ 177   2                      default:break;
+ 178   2              }
+ 179   1      }
+ 180          
+ 181          /**
+ 182            * @说明       配置PWM输出的管脚映射
+ 183             * @参数  Channel ：PWM输出源
+ 184            *                     PWM_0                   //PWM0通道
+ 185            *                     PWM_0_1                 //PWM01通道
+ 186            *                     PWM_1                   //PWM1通道
+ 187            *                     PWM_1_1                 //PWM11通道
+ 188            *                     PWM_2                   //PWM2通道
+ 189            *                     PWM_2_1                 //PWM21通道
+ 190            * @参数       OutPin ：管脚输出源
+ 191            *                     PWM_OutPin_P00  //PWM输出端口为P00
+ 192            *                     PWM_OutPin_P01  //PWM输出端口为P01
+ 193            *                     PWM_OutPin_P02  //PWM输出端口为P02
+ 194            *                     PWM_OutPin_P03  //PWM输出端口为P03
+ 195            *                     PWM_OutPin_P04  //PWM输出端口为P04
+ 196            *                     PWM_OutPin_P05  //PWM输出端口为P05
+ 197            *                     PWM_OutPin_P06  //PWM输出端口为P06
+ 198            *                     PWM_OutPin_P07  //PWM输出端口为P07
+ 199            *                     PWM_OutPin_P10  //PWM输出端口为P10
+ 200            *             PWM_OutPin_P11  //PWM输出端口为P11
+ 201            *                     PWM_OutPin_P20  //PWM输出端口为P20
+ 202            *                     PWM_OutPin_P21  //PWM输出端口为P21
+ 203            *                     PWM_OutPin_P22  //PWM输出端口为P22
+ 204            *                     PWM_OutPin_P23  //PWM输出端口为P23
+ 205            *                     PWM_OutPin_P24  //PWM输出端口为P24
+ 206            *                     PWM_OutPin_P25  //PWM输出端口为P25
+ 207            *                     PWM_OutPin_P26  //PWM输出端口为P26
+ 208            *                     PWM_OutPin_P27  //PWM输出端口为P27
+ 209            * @返回值 无
+ 210            * @注         无
+ 211            */
+ 212          void PWM_PinRemapConfig(PWM_Channel_TypeDef Channel,PWM_OutPin_TypeDef OutPin)
+ 213          {
+ 214   1              switch(Channel)
+ 215   1              {
+ 216   2                      case PWM_0: PWM0_MAP    = OutPin; break;
+ 217   2                      case PWM_0_1: PWM01_MAP = OutPin; break;
+ 218   2                      case PWM_1: PWM1_MAP    = OutPin; break;
+ 219   2                      case PWM_1_1: PWM11_MAP = OutPin; break;
+ 220   2                      case PWM_2: PWM2_MAP    = OutPin; break;
+ 221   2                      case PWM_2_1: PWM21_MAP = OutPin; break;
+ 222   2                      default:break;
+ 223   2              }
+ 224   1      }
+ 225          
+ 226          /**
+ 227            * @说明       PWM端口输出使能/失能
+ 228            * @参数       Channel ：PWM通道
+ 229            *                     PWM_0                   //PWM0通道
+ 230            *                     PWM_0_1                 //PWM01通道
+ 231            *                     PWM_0_All               //PWM0全部通道
+ 232            *                     PWM_1                   //PWM1通道
+ 233            *                     PWM_1_1                 //PWM11通道
+ 234            *                     PWM_1_All               //PWM1全部通道
+ 235            *                     PWM_2                   //PWM2通道
+ 236            *                     PWM_2_1                 //PWM21通道
+ 237            *                     PWM_2_All               //PWM2全部通道
+ 238            * @参数       NewState ：PWM通道输出新状态
+C51 COMPILER V9.54   HC89S_PWMGROUP                                                        06/16/2020 11:43:05 PAGE 5   
+
+ 239            *                     DISABLE         //失能
+ 240            *                     ENABLE          //使能
+ 241            * @返回值 无
+ 242            * @注         无
+ 243            */
+ 244          void PWM_OutPutCmd(PWM_Channel_TypeDef Channel,FunctionalState NewState)
+ 245          {
+ 246   1              switch(Channel)
+ 247   1              {
+ 248   2                      case PWM_0:
+ 249   2                                              if(NewState)PWM0EN |= PWMX_X_OEN;
+ 250   2                                              else PWM0EN &=~ PWMX_X_OEN;
+ 251   2                                              break;
+ 252   2                      case PWM_0_1:
+ 253   2                                              if(NewState)PWM0EN |= PWMX_X1_OEN;
+ 254   2                                              else PWM0EN &=~ PWMX_X1_OEN; 
+ 255   2                                              break;
+ 256   2                      case PWM_0_All:
+ 257   2                                              if(NewState)PWM0EN |= (PWMX_X1_OEN|PWMX_X_OEN);
+ 258   2                                              else PWM0EN &=~ (PWMX_X1_OEN|PWMX_X_OEN); 
+ 259   2                                              break;
+ 260   2                      case PWM_1:
+ 261   2                                              if(NewState)PWM1EN |= PWMX_X_OEN;
+ 262   2                                              else PWM1EN &=~ PWMX_X_OEN; 
+ 263   2                                              break;
+ 264   2                      case PWM_1_1:
+ 265   2                                              if(NewState)PWM1EN |= PWMX_X1_OEN;
+ 266   2                                              else PWM1EN &=~ PWMX_X1_OEN; 
+ 267   2                                              break;
+ 268   2                      case PWM_1_All:
+ 269   2                                              if(NewState)PWM1EN |= (PWMX_X1_OEN|PWMX_X_OEN);
+ 270   2                                              else PWM1EN &=~ (PWMX_X1_OEN|PWMX_X_OEN); 
+ 271   2                                              break;          
+ 272   2                      case PWM_2:
+ 273   2                                              if(NewState)PWM2EN |= PWMX_X_OEN;
+ 274   2                                              else PWM2EN &=~ PWMX_X_OEN; 
+ 275   2                                              break;
+ 276   2                      case PWM_2_1:
+ 277   2                                              if(NewState)PWM2EN |= PWMX_X1_OEN;
+ 278   2                                              else PWM2EN &=~ PWMX_X1_OEN; 
+ 279   2                                              break;
+ 280   2                      case PWM_2_All:
+ 281   2                                              if(NewState)PWM2EN |= (PWMX_X1_OEN|PWMX_X_OEN);
+ 282   2                                              else PWM2EN &=~ (PWMX_X1_OEN|PWMX_X_OEN); 
+ 283   2                                              break;
+ 284   2                      default:break;
+ 285   2              }
+ 286   1      }
+ 287            
+ 288          /**
+ 289            * @说明       PWM周期设置
+ 290            * @参数       Group ：PWM组
+ 291            *                     PWM0_Group              //PWM0组
+ 292            *                     PWM1_Group              //PWM1组
+ 293            *                     PWM2_Group              //PWM2组
+ 294            
+ 295            * @参数       PwmDeadZone ：PWM周期
+ 296            *         取值范围 0 - 0x0FFF
+ 297            * @返回值 无
+ 298            * @注         无
+ 299            */
+ 300          void PWM_PeriodConfig(PWM_Group_TypeDef Group,u16 PwmPeriod)
+C51 COMPILER V9.54   HC89S_PWMGROUP                                                        06/16/2020 11:43:05 PAGE 6   
+
+ 301          {
+ 302   1              switch(Group)
+ 303   1              {
+ 304   2                      case PWM0_Group:
+ 305   2                                      PWM0P = PwmPeriod;                      
+ 306   2                                      break;
+ 307   2                      case PWM1_Group:
+ 308   2                                      PWM1P = PwmPeriod;                      
+ 309   2                                      break;
+ 310   2                      case PWM2_Group:
+ 311   2                                      PWM2P = PwmPeriod;                      
+ 312   2                                      break;
+ 313   2                      default:break;
+ 314   2              }
+ 315   1      }
+ 316          
+ 317          
+ 318          /**
+ 319            * @说明       PWM占空比设置
+ 320            * @参数       Group ：PWM组
+ 321            *                     PWM0_Group              //PWM0组
+ 322            *                     PWM1_Group              //PWM1组
+ 323            *                     PWM2_Group              //PWM2组
+ 324            
+ 325            * @参数       PwmDeadZone ：PWM占空比
+ 326            *         取值范围 0 - 0x0FFF
+ 327            * @返回值 无
+ 328            * @注         无
+ 329            */
+ 330          void PWM_DutyCycleConfig(PWM_Group_TypeDef Group,u16 PwmDuty)
+ 331          {
+ 332   1              switch(Group)
+ 333   1              {
+ 334   2                      case PWM0_Group:
+ 335   2                                      PWM0D = PwmDuty;                        
+ 336   2                                      break;
+ 337   2                      case PWM1_Group:
+ 338   2                                      PWM1D = PwmDuty;                        
+ 339   2                                      break;
+ 340   2                      case PWM2_Group:
+ 341   2                                      PWM2D = PwmDuty;        
+ 342   2                                      break;
+ 343   2                      default:break;
+ 344   2              }
+ 345   1      }
+ 346          
+ 347          
+ 348          /**
+ 349            * @说明       PWM死区时间设置
+ 350            * @参数       Group ：PWM组
+ 351            *                     PWM0_Group              //PWM0组
+ 352            *                     PWM1_Group              //PWM1组
+ 353            *                     PWM2_Group              //PWM2组
+ 354            
+ 355            * @参数       PwmDeadZone ：PWM死区时间
+ 356            *         取值范围 0 - 0x0FFF
+ 357            * @返回值 无
+ 358            * @注         无
+ 359            */
+ 360          void PWM_DeadZoneConfig(PWM_Group_TypeDef Group,u16 PwmDeadZone)
+ 361          {
+ 362   1              switch(Group)
+C51 COMPILER V9.54   HC89S_PWMGROUP                                                        06/16/2020 11:43:05 PAGE 7   
+
+ 363   1              {
+ 364   2                      case PWM0_Group:
+ 365   2                                      PWM0DT = PwmDeadZone;                   
+ 366   2                                      break;
+ 367   2                      case PWM1_Group:
+ 368   2                                      PWM1DT = PwmDeadZone;                   
+ 369   2                                      break;
+ 370   2                      case PWM2_Group:
+ 371   2                                      PWM2DT = PwmDeadZone;                   
+ 372   2                                      break;
+ 373   2                      default:break;
+ 374   2              }
+ 375   1      }
+ 376          
+ 377                                                                                                  
+ 378          /**
+ 379            * @说明       使能或失能PWM模块
+ 380            * @参数       Group ：PWM组
+ 381            *                     PWM0_Group              //PWM0组
+ 382            *                     PWM1_Group              //PWM1组
+ 383            *                     PWM2_Group              //PWM2组
+ 384            
+ 385            * @参数       NewState ：PWM模块新状态
+ 386            *                     DISABLE         //失能
+ 387            *                     ENABLE          //使能
+ 388            * @返回值 无
+ 389            * @注         无
+ 390            */
+ 391          void PWM_Cmd(PWM_Group_TypeDef Group,FunctionalState NewState)
+ 392          {
+ 393   1              switch(Group)
+ 394   1              {
+ 395   2                      case PWM0_Group:
+ 396   2                                      if(NewState == ENABLE)PWM0EN |= PWMX_XEN;       
+ 397   2                                      else PWM0EN &=~ PWMX_XEN;                       
+ 398   2                                      break;
+ 399   2                      case PWM1_Group:
+ 400   2                                      if(NewState == ENABLE)PWM1EN |= PWMX_XEN;       
+ 401   2                                      else PWM1EN &=~ PWMX_XEN;               
+ 402   2                                      break;
+ 403   2                      case PWM2_Group:
+ 404   2                                      if(NewState == ENABLE)PWM2EN |= PWMX_XEN;       
+ 405   2                                      else PWM2EN &=~ PWMX_XEN;                       
+ 406   2                                      break;
+ 407   2                      default:break;
+ 408   2              }
+ 409   1      }
+ 410          
+ 411          
+ 412          /**
+ 413            * @说明       使能或失能PWM中断
+ 414            * @参数       Group ：PWM组
+ 415            *                     PWM0_Group              //PWM0组
+ 416            *                     PWM1_Group              //PWM1组
+ 417            *                     PWM2_Group              //PWM2组
+ 418           
+ 419            * @参数       NewState ：PWM中断功能新状态
+ 420            *                     DISABLE         //失能
+ 421            *                     ENABLE          //使能
+ 422            * @返回值 无
+ 423            * @注         无
+ 424            */
+C51 COMPILER V9.54   HC89S_PWMGROUP                                                        06/16/2020 11:43:05 PAGE 8   
+
+ 425          void PWM_ITCmd(PWM_Group_TypeDef Group,FunctionalState NewState)
+ 426          {
+ 427   1              switch(Group)
+ 428   1              {
+ 429   2                      case PWM0_Group:
+ 430   2                                      if(NewState == ENABLE)PWM0C |= PWMX_XIE;
+ 431   2                                      else PWM0C &=~ PWMX_XIE;                        
+ 432   2                                      break;
+ 433   2                      case PWM1_Group:
+ 434   2                                      if(NewState == ENABLE)PWM1C |= PWMX_XIE;
+ 435   2                                      else PWM1C &=~ PWMX_XIE;                
+ 436   2                                      break;
+ 437   2                      case PWM2_Group:
+ 438   2                                      if(NewState == ENABLE)PWM2C |= PWMX_XIE;
+ 439   2                                      else PWM2C &=~ PWMX_XIE;                        
+ 440   2                                      break;
+ 441   2                      default:break;
+ 442   2              }
+ 443   1      }
+ 444          
+ 445          /**
+ 446            * @说明       获取PWM中断标志位
+ 447            * @参数       Group ：PWM组
+ 448            *                     PWM0_Group              //PWM0组
+ 449            *                     PWM1_Group              //PWM1组
+ 450            *                     PWM2_Group              //PWM2组
+ 451            
+ 452            * @返回值 FlagStatus ：表明PWM中断状态
+ 453            *                     参考 FlagStatus 枚举类
+ 454            * @注         无
+ 455            */
+ 456          FlagStatus PWM_GetITFlag(PWM_Group_TypeDef Group)
+ 457          {
+ 458   1              switch(Group)
+ 459   1              {
+ 460   2                      case PWM0_Group:
+ 461   2                                      if(PWM0C & PWMX_XIF)return SET;
+ 462   2                                      else return RESET;                      
+ 463   2                                      break;
+ 464   2                      case PWM1_Group:
+ 465   2                                      if(PWM1C & PWMX_XIF)return SET;
+ 466   2                                      else return RESET;              
+ 467   2                                      break;
+ 468   2                      case PWM2_Group:
+ 469   2                                      if(PWM2C & PWMX_XIF)return SET;
+ 470   2                                      else return RESET;                      
+ 471   2                                      break;
+ 472   2                      default:break;
+ 473   2              }
+ 474   1              return RESET; 
+ 475   1      }
+ 476          
+ 477          /**
+ 478            * @说明       清除PWM中断标志位
+ 479            * @参数       Group ：PWM组
+ 480            *                     PWM0_Group              //PWM0组
+ 481            *                     PWM1_Group              //PWM1组
+ 482            *                     PWM2_Group              //PWM2组
+ 483            
+ 484          * @返回值 无
+ 485            * @注         需要软件清除PWM中断标志位
+ 486            */
+C51 COMPILER V9.54   HC89S_PWMGROUP                                                        06/16/2020 11:43:05 PAGE 9   
+
+ 487          void PWM_ClearITFlag(PWM_Group_TypeDef Group)
+ 488          {
+ 489   1              switch(Group)
+ 490   1              {
+ 491   2                      case PWM0_Group:
+ 492   2                                      PWM0C &=~ PWMX_XIF;;                    
+ 493   2                                      break;
+ 494   2                      case PWM1_Group:
+ 495   2                                      PWM1C &=~ PWMX_XIF;             
+ 496   2                                      break;
+ 497   2                      case PWM2_Group:
+ 498   2                                      PWM2C &=~ PWMX_XIF;                     
+ 499   2                                      break;
+ 500   2                      default:break;
+ 501   2              }
+ 502   1      }
+ 503          
+ 504                                                                                                  
+ 505          /**
+ 506            * @说明       获取PWM故障状态，关闭中/正常运行
+ 507            * @参数       Group ：PWM组
+ 508            *                     PWM0_Group              //PWM0组
+ 509            *                     PWM1_Group              //PWM1组
+ 510            *                     PWM2_Group              //PWM2组
+ 511            
+ 512            * @返回值 FlagStatus ：表明PWM故障状态
+ 513            *                     参考 FlagStatus 枚举类
+ 514            * @注         无
+ 515            */
+ 516          FlagStatus PWM_GetFLTFlag(PWM_Group_TypeDef Group)
+ 517          {
+ 518   1              switch(Group)
+ 519   1              {
+ 520   2                      case PWM0_Group:
+ 521   2                                      if(PWM0C & PWMX_FLTXS)return SET;
+ 522   2                                      else return RESET;                      
+ 523   2                                      break;
+ 524   2                      case PWM1_Group:
+ 525   2                                      if(PWM1C & PWMX_FLTXS)return SET;
+ 526   2                                      else return RESET;              
+ 527   2                                      break;
+ 528   2                      case PWM2_Group:
+ 529   2                                      if(PWM2C & PWMX_FLTXS)return SET;
+ 530   2                                      else return RESET;                      
+ 531   2                                      break;
+ 532   2                      default:break;
+ 533   2              }
+ 534   1              return RESET;
+ 535   1      }
+ 536          
+ 537          /**
+ 538            * @说明       PWM设置中断优先级
+ 539            * @参数       ITPriority ：PWM中断优先级
+ 540            *                     PWM_ITPriority_0        //PWM中断优先级0(最低)
+ 541            *                     PWM_ITPriority_1        //PWM中断优先级1
+ 542            *                     PWM_ITPriority_2        //PWM中断优先级2
+ 543            *                     PWM_ITPriority_3        //PWM中断优先级3(最高)
+ 544            * @返回值 无
+ 545            * @注         PWM0，PWM0，PWM0，PWM3共用同一中断向量
+ 546            */
+ 547          void PWM_ITPriorityConfig(PWM_ITPriority_TypeDef ITPriority)
+ 548          {
+C51 COMPILER V9.54   HC89S_PWMGROUP                                                        06/16/2020 11:43:05 PAGE 10  
+
+ 549   1              IP2 = (IP2&(~INT_PPWM))|ITPriority;             
+ 550   1      }
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    785    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----       8
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

@@ -1,0 +1,46 @@
+C51 COMPILER V9.54   HC89S_SOFTI2C                                                         06/16/2020 11:43:05 PAGE 1   
+
+
+C51 COMPILER V9.54, COMPILATION OF MODULE HC89S_SOFTI2C
+OBJECT MODULE PLACED IN .\Objects\hc89s_softi2c.obj
+COMPILER INVOKED BY: D:\keilC51\C51\BIN\C51.EXE hc89s_softi2c.c OPTIMIZE(8,SPEED) BROWSE DEBUG OBJECTEXTEND PRINT(.\List
+                    -ings\hc89s_softi2c.lst) OBJECT(.\Objects\hc89s_softi2c.obj)
+
+line level    source
+
+   1          #include "hc89s_softi2c.h"
+   2          
+   3          void softi2c_pinmux_setup() {
+   4   1          // P00-SCL带上拉SMT输入 P01-SDA 带上拉SMT输入
+   5   1          P0M0 = 0x66;
+   6   1      }
+   7          
+   8          void softi2c_int_config() {
+   9   1          // INT0(SCL)上升沿触发 INT1(SDA) 上升下降沿触发
+  10   1           PITS0 |= 0xE;
+  11   1          // INT端口选择 INT0->P00 INT1->P01
+  12   1          INT01_PINS = 0x00;
+  13   1          
+  14   1          EXTI_ITPriorityConfig(INT0, EXTI_ITPriority_2);
+  15   1          EXTI_ITPriorityConfig(INT1, EXTI_ITPriority_3);
+  16   1          
+  17   1          EXTI_ClearFlag(INT0);
+  18   1          EXTI_ClearFlag(INT1);
+  19   1          
+  20   1          EXTI_Cmd(INT0, ENABLE);
+  21   1          EXTI_Cmd(INT1, ENABLE);
+  22   1      }
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =     56    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

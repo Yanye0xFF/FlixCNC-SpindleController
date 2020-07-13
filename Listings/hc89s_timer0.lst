@@ -1,0 +1,243 @@
+C51 COMPILER V9.54   HC89S_TIMER0                                                          06/16/2020 11:43:05 PAGE 1   
+
+
+C51 COMPILER V9.54, COMPILATION OF MODULE HC89S_TIMER0
+OBJECT MODULE PLACED IN .\Objects\hc89s_timer0.obj
+COMPILER INVOKED BY: D:\keilC51\C51\BIN\C51.EXE hc89s_timer0.c OPTIMIZE(8,SPEED) BROWSE DEBUG OBJECTEXTEND PRINT(.\Listi
+                    -ngs\hc89s_timer0.lst) OBJECT(.\Objects\hc89s_timer0.obj)
+
+line level    source
+
+   1          /**
+   2          *   ************************************************************************************
+   3          *                                                               上海芯圣电子股份有限公司
+   4          *                                                                   www.holychip.cn
+   5          *       ************************************************************************************
+   6          *       @File                           hc89s_timer0.c
+   7          *       @Library Version        V1.0.0.0
+   8          *       @Date                           2019.07.19
+   9          *       ************************************************************************************
+  10          *                                                                        模块性能介绍
+  11          *       1、HC89S003的定时器0，1共有四种工作方式。
+  12          *          方式0：16位自动重装定时器/计数器。
+  13          *          方式1：16位定时器/计数器。
+  14          *          方式2：8位自动重装定时器/计数器。
+  15          *          方式3：T0分成两个（TL0/TH0）独立的8位定时器/计数器（T1无此模式）。
+  16          *       ************************************************************************************
+  17          *                                                                        应用注意事项
+  18          *       1、方式3时T0占用T1的TR1、TF1及中断源，由于TR1被T0占用，此时需要关闭T1可将T1设为工作
+  19          *          方式3。
+  20          *       2、在方式0（Mode0）时THx(x = 0,1)和TLx(x = 0,1)读写操作遵循先高位后低位。并且在修改
+  21          *          重载数据时，低位无论有无改变，只要高位被修改，低位都必须再写入一次，方式 1、2、3
+  22          *          时无此要求。
+  23          *       ************************************************************************************
+  24          *                                                                      函数总览
+  25          *       TIM0_DeInit();                                          //恢复TIM0寄存器到默认值
+  26          *       TIM0_Init();                                            //根据指定的参数初始化TIM0
+  27          *       TIM0_TimerCnt();                                        //TIM0定时时间设置
+  28          *       TIM0_OutPutCmd();                                       //TIM0端口输出使能/失能
+  29          *       TIM0_Cmd();                                                     //使能或失能TIM0
+  30          *       TIM0_PinRemapConfig()                           //配置TIM0输出的管脚映射
+  31          *       TIM0_ITCmd();                                           //使能或失能TIM0中断
+  32          *       TIM0_GetITFlag();                                       //读取TIM0中断标志状态
+  33          *       TIM0_ClearITFlag();                                     //清除TIM0中断标志状态
+  34          *       TIM0_ITPriorityConfig();                        //TIM0中断优先级配置
+  35          *       ************************************************************************************
+  36          *                                                                          计算公式
+  37          *       1、Tim0计算时间
+  38          *          定时时间 = (65536 - T0) * (1 / (Fosc /Timer分频系数))
+  39          *       2、Tim0反推初值
+  40          *          初值 = 65536 - ((定时时间) / (1/(Fosc / Timer分频系数)))
+  41          *       ************************************************************************************
+  42          *                                                                      客户服务
+  43          *        感谢您使用我们的单片机，若发现错误或对函数的使用存在疑问。请添加上海芯圣电子官方QQ
+  44          *       ****************************技术支持群：201030494**********************************
+  45          *   ************************************************************************************
+  46          **/
+  47          
+  48          #include "hc89s_timer0.h"
+  49          
+  50          /**
+  51            * @说明       恢复TIM0寄存器到默认值
+  52            * @参数       无
+  53            * @返回值 无
+  54            * @注         无
+C51 COMPILER V9.54   HC89S_TIMER0                                                          06/16/2020 11:43:05 PAGE 2   
+
+  55            */
+  56          void TIM0_DeInit(void)
+  57          {
+  58   1              TMOD  &=~ (TIMER_GATE0|TIMER_CT0|TIMER_M0);
+  59   1              TCON1 &=~ (TIMER_T0OUT|TIMER_T0X12);
+  60   1              TCON  &=~ (TIMER_TF0|TIMER_TR0);
+  61   1              T0_MAP = TIMER_T0MAP_RESET_VALUE;
+  62   1              TH0 = TIMER_T0_RESET_VALUE>>8;
+  63   1              TL0 = TIMER_T0_RESET_VALUE&0x00FF;
+  64   1      }
+  65          
+  66          /**
+  67            * @说明       根据指定的参数初始化TIM0
+  68            * @参数       ClkPrescaler ：TIM0时钟分频系数
+  69            *                     TIM0_CLK_1              //时钟1分频
+  70            *                     TIM0_CLK_12             //时钟12分频
+  71            * @参数       Gate ：TIM0软件控制/软件硬件同时控制
+  72            *                     TIM0_SOFT_CONTROL                       //只需软件置 TRx 即可启动 Tx
+  73            *                     TIM0_SOFT_AND_HARD_CONTROL      //只有在 INTx 端口电平为高电平时 TRx 置 1， Tx 才工作
+  74            * @参数       CntOrTim ：TIM0计数/定时
+  75            *                     TIM0_INTIMING           //Tx 用于内部定时
+  76            *                     TIM0_OUTCLKCNT          //Tx 用于外部计数
+  77            * @参数       Mode ：TIM0工作模式
+  78            *                     TIM0_16BIT_AUTO_CNT_TIMING              //16位重装载定时器/计数器
+  79            *                     TIM0_16BIT_CNT_TIMING                   //16位定时器/计数器
+  80            *                     TIM0_8BIT_AUTO_CNT_TIMING               //8位自动重装初值定时器/计数器
+  81            * @返回值 无
+  82            * @注         无
+  83            */
+  84          void TIM0_Init(TIM0_ClkPrescaler_Typedef ClkPrescaler,TIM0_Gate_Typedef Gate,TIM0_CntOrTim_Typedef CntOrTi
+             -m,TIM0_Mode_Typedef Mode)
+  85          {
+  86   1              TCON1 = (TCON1&(~TIMER_T0X12))|(ClkPrescaler&TIMER_T0X12);
+  87   1              TMOD  = (TMOD&(~(TIMER_GATE0|TIMER_CT0|TIMER_M0)))|(Gate&TIMER_GATE0)|(CntOrTim&TIMER_CT0)|(Mode&TIMER_M0
+             -);        
+  88   1      }
+  89          
+  90          /**
+  91            * @说明       TIM0定时时间设置
+  92            * @参数       Value ：TIM0定时时间
+  93            *         取值范围：0x0000 - 0xFFFF
+  94            * @返回值 无
+  95            * @注         无
+  96            */
+  97          void TIM0_TimerCnt(u16 Value)
+  98          {
+  99   1              TH0 = Value>>8;
+ 100   1              TL0 = Value&0x00FF;     
+ 101   1      }
+ 102          
+ 103          /**
+ 104            * @说明       TIM0端口输出使能/失能
+ 105            * @参数       NewState ：TIM0通道输出新状态
+ 106            *                     DISABLE         //失能
+ 107            *                     ENABLE          //使能
+ 108            * @返回值 无
+ 109            * @注         无
+ 110            */
+ 111          void TIM0_OutPutCmd(FunctionalState NewState)
+ 112          {
+ 113   1              if(NewState)TCON1 |= TIMER_T0OUT;
+ 114   1              else TCON1 &=~ TIMER_T0OUT;
+C51 COMPILER V9.54   HC89S_TIMER0                                                          06/16/2020 11:43:05 PAGE 3   
+
+ 115   1      }
+ 116          
+ 117          /**
+ 118            * @说明       使能或失能TIM0
+ 119            * @参数       NewState ：TIM0新状态
+ 120            *                     DISABLE         //失能
+ 121            *                     ENABLE          //使能
+ 122            * @返回值 无
+ 123            * @注         无
+ 124            */
+ 125          void TIM0_Cmd(FunctionalState NewState)
+ 126          {
+ 127   1              if(NewState)TCON |= TIMER_TR0;
+ 128   1              else TCON &=~ TIMER_TR0;
+ 129   1      }
+ 130          
+ 131          /**
+ 132            * @说明       配置TIM0输出的管脚映射
+ 133            * @参数       OutPin ：管脚输出源
+ 134            *                     TIM0_OUTPin_P00         //TIM0输出端口为P00
+ 135            *                     TIM0_OUTPin_P01         //TIM0输出端口为P01
+ 136            *                     TIM0_OUTPin_P02         //TIM0输出端口为P02
+ 137            *                     TIM0_OUTPin_P03         //TIM0输出端口为P03
+ 138            *                     TIM0_OUTPin_P04         //TIM0输出端口为P04
+ 139            *                     TIM0_OUTPin_P05         //TIM0输出端口为P05
+ 140            *                     TIM0_OUTPin_P06         //TIM0输出端口为P06
+ 141            *                     TIM0_OUTPin_P07         //TIM0输出端口为P07
+ 142            *                     TIM0_OUTPin_P10         //TIM0输出端口为P10
+ 143            *             TIM0_OUTPin_P11         //TIM0输出端口为P11
+ 144            *                     TIM0_OUTPin_P20         //TIM0输出端口为P20
+ 145            *                     TIM0_OUTPin_P21         //TIM0输出端口为P21
+ 146            *                     TIM0_OUTPin_P22         //TIM0输出端口为P22
+ 147            *                     TIM0_OUTPin_P23         //TIM0输出端口为P23
+ 148            *                     TIM0_OUTPin_P24         //TIM0输出端口为P24
+ 149            *                     TIM0_OUTPin_P25         //TIM0输出端口为P25
+ 150            *                     TIM0_OUTPin_P26         //TIM0输出端口为P26
+ 151            *                     TIM0_OUTPin_P27         //TIM0输出端口为P27
+ 152            * @返回值 无
+ 153            * @注         无
+ 154            */
+ 155          void TIM0_PinRemapConfig(TIM0_OutPin_TypeDef OutPin)
+ 156          {
+ 157   1              T0_MAP = OutPin;
+ 158   1      }
+ 159          
+ 160          /**
+ 161            * @说明       使能或失能TIM0中断
+ 162            * @参数       NewState ：TIM0中断新状态
+ 163            *                     DISABLE         //失能
+ 164            *                     ENABLE          //使能
+ 165            * @返回值 无
+ 166            * @注         无
+ 167            */
+ 168          void TIM0_ITCmd(FunctionalState NewState)
+ 169          {
+ 170   1              if(NewState)IE |= INT_ET0;
+ 171   1              else IE &=~ INT_ET0;
+ 172   1      }
+ 173          
+ 174          /**
+ 175            * @说明       读取TIM0中断标志状态
+ 176            * @参数       无
+C51 COMPILER V9.54   HC89S_TIMER0                                                          06/16/2020 11:43:05 PAGE 4   
+
+ 177            * @返回值 FlagStatus ：TIM0中断标志状态
+ 178            *                     参考 FlagStatus 枚举类
+ 179            * @注         无
+ 180            */
+ 181          FlagStatus TIM0_GetITFlag(void)
+ 182          {
+ 183   1              if(TCON&TIMER_TF0) return SET;
+ 184   1              return RESET;
+ 185   1      }
+ 186          
+ 187          /**
+ 188            * @说明       清除TIM0中断标志状态
+ 189            * @参数       无
+ 190            * @返回值 无
+ 191            * @注         无
+ 192            */
+ 193          void TIM0_ClearITFlag(void)
+ 194          {
+ 195   1              TCON &=~ TIMER_TF0;     
+ 196   1      }
+ 197          
+ 198          /**
+ 199            * @说明       设置TIM0中断优先级
+ 200            * @参数       ITPriority ：TIM0中断优先级
+ 201            *                     TIM0_ITPriority_0       //TIM0中断优先级0(最低)
+ 202            *                     TIM0_ITPriority_1       //TIM0中断优先级1
+ 203            *                     TIM0_ITPriority_2       //TIM0中断优先级2
+ 204            *                     TIM0_ITPriority_3       //TIM0中断优先级3(最高)
+ 205            * @返回值 无
+ 206            * @注         无
+ 207            */
+ 208          void TIM0_ITPriorityConfig(TIM0_ITPriority_TypeDef ITPriority)
+ 209          {
+ 210   1              IP0 = (IP0&(~INT_PT0))|ITPriority;              
+ 211   1      }
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    137    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----       4
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

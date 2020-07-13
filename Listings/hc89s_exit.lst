@@ -1,0 +1,277 @@
+C51 COMPILER V9.54   HC89S_EXIT                                                            06/16/2020 11:43:05 PAGE 1   
+
+
+C51 COMPILER V9.54, COMPILATION OF MODULE HC89S_EXIT
+OBJECT MODULE PLACED IN .\Objects\hc89s_exit.obj
+COMPILER INVOKED BY: D:\keilC51\C51\BIN\C51.EXE hc89s_exit.c OPTIMIZE(8,SPEED) BROWSE DEBUG OBJECTEXTEND PRINT(.\Listing
+                    -s\hc89s_exit.lst) OBJECT(.\Objects\hc89s_exit.obj)
+
+line level    source
+
+   1          /**
+   2          *                                                                        模块性能介绍
+   3          *       1、HC89S003总共提供了16个外部中断，可以设置4级中断的优先级。
+   4          *       2、有4个外部中断向量入口，INT0/INT1分别有一个独立的中断向量入口，INT2-7共用一个中断
+   5          *          向量入口，INT8-15共用一个中断向量入口。
+   6          *       3、所有外部中断都可以设定4种触发方式，分别为上升沿、下降沿、双沿以及低电平。
+   7          *       4、INT0、INT1中断标志位硬件自动清0，INT2-INT15需软件清0。
+   8          *       ************************************************************************************
+   9          *                                                                        应用注意事项
+  10          *       1、只要相应的EINTx(x=2...15)被允许，对应的中断标志就可能被置1，反之，对应标志不会被置1。
+  11          *       2、外部中断在使用查询方式时，无法正常清除中断标志位。可以通过先禁止中断使能位再清除
+  12          *          中断标志，在完成清除中断标志位后再使能外部中断来进行正常的外部中断产生查询。使用
+  13          *          中断方式时，无该问题。
+  14          *       ************************************************************************************
+  15          *                                                                      函数总览
+  16          *       EXTI_DeInit()                                           //恢复外部中断寄存器到默认值
+  17          *       EXTI_Init()                                                     //根据指定的参数初始化外部中断
+  18          *       EXTI_Cmd()                                                      //使能或失能外部中断
+  19          *       EXTI_GetFlag()                                          //获取外部中断的标志状态
+  20          *       EXTI_ClearFlag()                                        //清除外部中断标志位
+  21          *       EXTI_INT0PinChoose()                            //INT0管脚选择
+  22          *       EXTI_INT1PinChoose()                            //INT1管脚选择
+  23          *       EXTI_ITPriorityConfig()                         //设置EXTI中断优先级
+  24          *       ************************************************************************************
+  25          **/
+  26          
+  27          
+  28          #include "hc89s_exit.h"
+  29          
+  30          /**
+  31            * @说明       恢复外部中断寄存器到默认值
+  32            * @参数       无
+  33            * @返回值 无
+  34            * @注         无
+  35            */
+  36          void EXTI_DeInit(void)
+  37          {
+  38   1              PITS  = INT_PITS_RESET_VALUE;
+  39   1              PINTE = INT_PINTE_RESET_VALUE;
+  40   1              PINTF = INT_PINTF_RESET_VALUE;
+  41   1      }
+  42          
+  43          /**
+  44            * @说明       根据指定的参数初始化外部中断
+  45            * @参数       Number ：外部中断通道
+  46            *                     INT0    //外部中断0     
+  47            *                     INT1    //外部中断1
+  48            *                     INT2    //外部中断2
+  49            *                     INT3    //外部中断3
+  50            *                     INT4    //外部中断4
+  51            *                     INT5    //外部中断5
+  52            *                     INT6    //外部中断6
+  53            *                     INT7    //外部中断7
+  54            *                     INT8    //外部中断8
+C51 COMPILER V9.54   HC89S_EXIT                                                            06/16/2020 11:43:05 PAGE 2   
+
+  55            *                     INT9    //外部中断9
+  56            *                     INT10   //外部中断10
+  57            *                     INT11   //外部中断11
+  58            *                     INT12   //外部中断12
+  59            *                     INT13   //外部中断13
+  60            *                     INT14   //外部中断14
+  61            *                     INT15   //外部中断15
+  62            * @参数       Sensitivity ：外部中断触发方式
+  63            *                     EXTI_SENSITIVITY_LOW_ONLY       //低电平触发
+  64            *                     EXTI_SENSITIVITY_FALL_ONLY      //下降沿触发
+  65            *                     EXTI_SENSITIVITY_RISE_ONLY      //上升沿触发
+  66            *                     EXTI_SENSITIVITY_RISE_FALL      //双沿触发
+  67            * @返回值 无
+  68            * @注         无
+  69            */
+  70          void EXTI_Init(EXTI_Number_TypeDef Number,EXTI_Sensitivity_TypeDef Sensitivity)
+  71          {
+  72   1              PITS = Tranverse32((PITS & (~(0x00000003<<Number))) |((0x00000003&(u32)Sensitivity)<<Number));
+  73   1      }
+  74          
+  75          /**
+  76            * @说明       使能或失能外部中断
+  77            * @参数       Number ：外部中断通道
+  78            *                     INT0    //外部中断0     
+  79            *                     INT1    //外部中断1
+  80            *                     INT2    //外部中断2
+  81            *                     INT3    //外部中断3
+  82            *                     INT4    //外部中断4
+  83            *                     INT5    //外部中断5
+  84            *                     INT6    //外部中断6
+  85            *                     INT7    //外部中断7
+  86            *                     INT8    //外部中断8
+  87            *                     INT9    //外部中断9
+  88            *                     INT10   //外部中断10
+  89            *                     INT11   //外部中断11
+  90            *                     INT12   //外部中断12
+  91            *                     INT13   //外部中断13
+  92            *                     INT14   //外部中断14
+  93            *                     INT15   //外部中断15
+  94            * @参数       NewState ：外部中断Number通道新状态
+  95                                  DISABLE         //失能
+  96                                  ENABLE          //使能
+  97            * @返回值 无
+  98            * @注         无
+  99            */
+ 100          void EXTI_Cmd(EXTI_Number_TypeDef Number,FunctionalState NewState)
+ 101          {
+ 102   1              if(NewState)
+ 103   1              {
+ 104   2                      if(Number == 0)IE |= INT_EX0;
+ 105   2                      else if(Number == 2)IE |= INT_EX1;
+ 106   2                      else if(Number <= INT7){
+ 107   3                              IE1 |= INT_EX2_7;
+ 108   3                              PINTE |= Tranverse16(0x0001 << (Number/2));     
+ 109   3                      }
+ 110   2                      else if(Number <= INT15){
+ 111   3                              IE1 |= INT_EX8_15;
+ 112   3                              PINTE |= Tranverse16(0x0001 << (Number/2));     
+ 113   3                      }
+ 114   2              }
+ 115   1              else
+ 116   1              {
+C51 COMPILER V9.54   HC89S_EXIT                                                            06/16/2020 11:43:05 PAGE 3   
+
+ 117   2                      if(Number == 0)IE &=~ INT_EX0;
+ 118   2                      else if(Number == 2)IE &=~ INT_EX1;
+ 119   2                      else if(Number <= INT7){
+ 120   3                              IE1 &=~ INT_EX2_7;
+ 121   3                              PINTE &=~ Tranverse16(0x0001 << (Number/2));    
+ 122   3                      }
+ 123   2                      else if(Number <= INT15){
+ 124   3                              IE1 &=~ INT_EX8_15;
+ 125   3                              PINTE &=~ Tranverse16(0x0001 << (Number/2));    
+ 126   3                      }
+ 127   2              }
+ 128   1      }
+ 129          
+ 130          /**
+ 131            * @说明       获取外部中断的标志状态
+ 132            * @参数       Number ：外部中断通道
+ 133            *                     INT0    //外部中断0     
+ 134            *                     INT1    //外部中断1
+ 135            *                     INT2    //外部中断2
+ 136            *                     INT3    //外部中断3
+ 137            *                     INT4    //外部中断4
+ 138            *                     INT5    //外部中断5
+ 139            *                     INT6    //外部中断6
+ 140            *                     INT7    //外部中断7
+ 141            *                     INT8    //外部中断8
+ 142            *                     INT9    //外部中断9
+ 143            *                     INT10   //外部中断10
+ 144            *                     INT11   //外部中断11
+ 145            *                     INT12   //外部中断12
+ 146            *                     INT13   //外部中断13
+ 147            *                     INT14   //外部中断14
+ 148            *                     INT15   //外部中断15
+ 149            * @返回值 FlagStatus ：外部中断标志状态
+ 150            *                     参考 FlagStatus 枚举类
+ 151            * @注         无
+ 152            */
+ 153          FlagStatus EXTI_GetFlag(EXTI_Number_TypeDef Number)
+ 154          {
+ 155   1              if(PINTF&(0x0001<<(Number/2)))return SET;
+ 156   1              return RESET;
+ 157   1      }
+ 158          
+ 159          /**
+ 160            * @说明       清除外部中断标志位
+ 161            * @参数       Number ：外部中断通道
+ 162            *                     INT0    //外部中断0     
+ 163            *                     INT1    //外部中断1
+ 164            *                     INT2    //外部中断2
+ 165            *                     INT3    //外部中断3
+ 166            *                     INT4    //外部中断4
+ 167            *                     INT5    //外部中断5
+ 168            *                     INT6    //外部中断6
+ 169            *                     INT7    //外部中断7
+ 170            *                     INT8    //外部中断8
+ 171            *                     INT9    //外部中断9
+ 172            *                     INT10   //外部中断10
+ 173            *                     INT11   //外部中断11
+ 174            *                     INT12   //外部中断12
+ 175            *                     INT13   //外部中断13
+ 176            *                     INT14   //外部中断14
+ 177            *                     INT15   //外部中断15
+ 178            * @返回值 无
+C51 COMPILER V9.54   HC89S_EXIT                                                            06/16/2020 11:43:05 PAGE 4   
+
+ 179            * @注         无
+ 180            */
+ 181          void EXTI_ClearFlag(EXTI_Number_TypeDef Number)
+ 182          {
+ 183   1              PINTF &=~ (0x0001<<(Number/2)); 
+ 184   1      }
+ 185          
+ 186          /**
+ 187            * @说明       INT0管脚选择
+ 188            * @参数       INT0PinChoose : INT0管脚选择
+ 189            *                     INT0_P00        //INT0管脚选择P00       
+ 190            *                     INT0_P10        //INT0管脚选择P10
+ 191            * @返回值 无
+ 192            * @注         无
+ 193            */
+ 194          void EXTI_INT0PinChoose(EXTI_INT0PinChoose_TypeDef INT0PinChoose)
+ 195          {
+ 196   1              INT01_PINS = (INT01_PINS&(~INT_INT0_PINS))|INT0PinChoose;       
+ 197   1      }
+ 198          
+ 199          /**
+ 200            * @说明       INT1管脚选择
+ 201            * @参数       INT1PinChoose : INT1管脚选择
+ 202            *                     INT1_P01        //INT1管脚选择P01
+ 203            *                     INT1_P11        //INT1管脚选择P11
+ 204            * @返回值 无
+ 205            * @注         无
+ 206            */
+ 207          void EXTI_INT1PinChoose(EXTI_INT0PinChoose_TypeDef INT1PinChoose)
+ 208          {
+ 209   1              INT01_PINS = (INT01_PINS&(~INT_INT1_PINS))|INT1PinChoose;       
+ 210   1      }
+ 211          
+ 212          /**
+ 213            * @说明       EXTI中断优先级设置
+ 214            * @参数       Number ：外部中断通道
+ 215            *                     INT0    //外部中断0     
+ 216            *                     INT1    //外部中断1
+ 217            *                     INT2    //外部中断2
+ 218            *                     INT3    //外部中断3
+ 219            *                     INT4    //外部中断4
+ 220            *                     INT5    //外部中断5
+ 221            *                     INT6    //外部中断6
+ 222            *                     INT7    //外部中断7
+ 223            *                     INT8    //外部中断8
+ 224            *                     INT9    //外部中断9
+ 225            *                     INT10   //外部中断10
+ 226            *                     INT11   //外部中断11
+ 227            *                     INT12   //外部中断12
+ 228            *                     INT13   //外部中断13
+ 229            *                     INT14   //外部中断14
+ 230            *                     INT15   //外部中断15
+ 231            * @参数       ITPriority ：中断优先级
+ 232            *                     EXTI_ITPriority_0       //优先级0(最低)
+ 233            *                     EXTI_ITPriority_1       //优先级1
+ 234            *                     EXTI_ITPriority_2       //优先级2
+ 235            *                     EXTI_ITPriority_3       //优先级3(最高)
+ 236            * @返回值 无
+ 237            * @注         INT2-7共用一个控制位，INT8-15共用一个控制位
+ 238            */
+ 239          void EXTI_ITPriorityConfig(EXTI_Number_TypeDef Number,EXTI_ITPriority_TypeDef ITPriority)
+ 240          {
+C51 COMPILER V9.54   HC89S_EXIT                                                            06/16/2020 11:43:05 PAGE 5   
+
+ 241   1              if(Number == 0)IP0 = (IP0&(~INT_PX0))|ITPriority;
+ 242   1              else if(Number == 2)IP0 = (IP0&(~INT_PX1))|(ITPriority<<4);
+ 243   1              else if(Number <= INT7)IP3 = (IP3&(~INT_PX2_7))|(ITPriority<<4);
+ 244   1              else if(Number <= INT15)IP3 = (IP3&(~INT_PX8_15))|(ITPriority<<6);
+ 245   1      }
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =   1028    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----       2
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)
